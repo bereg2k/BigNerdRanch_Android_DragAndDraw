@@ -126,8 +126,6 @@ public class BoxDrawingView extends View {
                 y0 = mMaxDisplayHeight - x;
                 break;
             default:
-                x0 = x;
-                y0 = y;
         }
 
         return new PointF(x0, y0);
@@ -157,8 +155,6 @@ public class BoxDrawingView extends View {
                 y = x0;
                 break;
             default:
-                x = x0;
-                y = y0;
         }
 
         return new PointF(x, y);
