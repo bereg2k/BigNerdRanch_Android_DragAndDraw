@@ -16,6 +16,9 @@ import androidx.fragment.app.Fragment;
 import com.bignerdranch.android.draganddraw.R;
 import com.bignerdranch.android.draganddraw.view.BoxDrawingView;
 
+/**
+ * Main fragment for hosting a canvas for drawing boxes.
+ */
 public class DragAndDrawFragment extends Fragment {
     private static final String TAG = DragAndDrawFragment.class.getSimpleName();
     private static final boolean IS_FRAGMENT_STATE_RETAIN = true;
@@ -41,7 +44,6 @@ public class DragAndDrawFragment extends Fragment {
         View view = inflater.inflate(R.layout.fragment_drag_and_draw, container, false);
 
         mBoxDrawingView = view.findViewById(R.id.box_drawing_view);
-        mBoxDrawingView.currentRotation = getActivity().getWindowManager().getDefaultDisplay().getRotation();
 
         return view;
     }
@@ -58,6 +60,9 @@ public class DragAndDrawFragment extends Fragment {
             case R.id.menu_clear:
                 mBoxDrawingView.clearCanvas();
                 Log.i(TAG, "Canvas is cleared");
+                return true;
+            case R.id.menu_undo:
+                mBoxDrawingView.undoLastDraw();
                 return true;
             default:
                 return super.onOptionsItemSelected(item);

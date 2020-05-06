@@ -23,18 +23,21 @@ import com.bignerdranch.android.draganddraw.model.Box;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Main view for drawing boxes.
+ */
 public class BoxDrawingView extends View {
     private static final String TAG = BoxDrawingView.class.getSimpleName();
 
     private static final String ARG_CURRENT_OR = "ARG_CURRENT_OR";
     private static final String ARG_CURRENT_CUR = "ARG_CURRENT_CUR";
     private static final String ARG_PARENT_VIEW = "ARG_PARENT_VIEW";
-    private static final String ARG_CURRENT_ROTATION = "ARG_INITIAL_ROTATION";
+    private static final String ARG_BOX_ROTATION = "ARG_BOX_ROTATION";
 
-    public Integer initialRotation;
-    public Integer currentRotation;
     private int mMaxDisplayHeight;
     private int mMaxDisplayWidth;
+    private Integer mCurrentScreenRotation;
+    private float mBoxDegreeRotation;
 
     private Box mCurrent;
     private List<Box> mBoxes = new ArrayList<>();
@@ -61,21 +64,14 @@ public class BoxDrawingView extends View {
         Resources resources = getResources();
 
         mBoxPaint = new Paint();
-        mBoxPaint.setColor(resources.getColor(R.color.colorPrimary));
+        mBoxPaint.setColor(resources.getColor(R.color.colorPrimary) & 0x60FF0000);
 
         mBackgroundPaint = new Paint();
         mBackgroundPaint.setColor(resources.getColor(R.color.colorCanvasBack));
 
-        initialRotation = ((Activity) getContext()).getWindowManager().getDefaultDisplay().getRotation();
+        mCurrentScreenRotation = ((Activity) getContext()).getWindowManager().getDefaultDisplay().getRotation();
 
         calculateDisplayMetrics();
-    }
-
-    private void calculateDisplayMetrics() {
-        DisplayMetrics metrics = new DisplayMetrics();
-        ((Activity) getContext()).getWindowManager().getDefaultDisplay().getMetrics(metrics);
-        mMaxDisplayWidth = Math.min(metrics.heightPixels, metrics.widthPixels);
-        mMaxDisplayHeight = Math.max(metrics.heightPixels, metrics.widthPixels);
     }
 
     /**
@@ -84,6 +80,18 @@ public class BoxDrawingView extends View {
     public void clearCanvas() {
         mCurrent = null;
         mBoxes.clear();
+        mBoxDegreeRotation = 0;
+        invalidate();
+    }
+
+    /**
+     * Cancel the last drawn rectangle.
+     */
+    public void undoLastDraw() {
+        if (mBoxes.isEmpty()) {
+            return;
+        }
+        mBoxes.remove(mBoxes.size() - 1);
         invalidate();
     }
 
@@ -94,21 +102,162 @@ public class BoxDrawingView extends View {
         bundle.putParcelable(ARG_PARENT_VIEW, super.onSaveInstanceState());
 
         for (int i = 0; i < mBoxes.size(); i++) {
-            bundle.putParcelable(ARG_CURRENT_OR + "_" + i, calculateZeroBaseCoordinates(mBoxes.get(i).getOrigin()));
-            bundle.putParcelable(ARG_CURRENT_CUR + "_" + i, calculateZeroBaseCoordinates(mBoxes.get(i).getCurrent()));
+            bundle.putParcelable(ARG_CURRENT_OR + "_" + i, calculateZeroBaseCoordinates(mBoxes.get(i).getOriginPoint()));
+            bundle.putParcelable(ARG_CURRENT_CUR + "_" + i, calculateZeroBaseCoordinates(mBoxes.get(i).getCurrentPoint()));
+            bundle.putFloat(ARG_BOX_ROTATION + "_" + i, mBoxes.get(i).getRotation());
         }
 
-        bundle.putInt(ARG_CURRENT_ROTATION, currentRotation);
         return bundle;
     }
 
+    @Override
+    protected void onRestoreInstanceState(Parcelable state) {
+        Bundle bundle = ((Bundle) state);
+        Parcelable parentState = bundle.getParcelable(ARG_PARENT_VIEW);
+        super.onRestoreInstanceState(parentState);
+
+        mCurrentScreenRotation = ((Activity) getContext()).getWindowManager().getDefaultDisplay().getRotation();
+
+        int i = 0;
+        while (bundle.getParcelable(ARG_CURRENT_OR + "_" + i) != null) {
+            PointF originPoint = bundle.getParcelable(ARG_CURRENT_OR + "_" + i);
+            PointF currentPoint = bundle.getParcelable(ARG_CURRENT_CUR + "_" + i);
+            float boxRotation = bundle.getFloat(ARG_BOX_ROTATION + "_" + i);
+
+            Box box = new Box(calculateNewCoordinates(originPoint));
+            box.setCurrentPoint(calculateNewCoordinates(currentPoint));
+            box.setRotation(boxRotation);
+            mBoxes.add(box);
+            i++;
+        }
+        invalidate();
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        int actionIndex = event.getActionIndex();
+        int actionPointerId = event.getPointerId(actionIndex);
+        float pointerX = event.getX(actionIndex);
+        float pointerY = event.getY(actionIndex);
+        PointF currentIndexed = new PointF(pointerX, pointerY);
+
+        String action = "";
+
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                action = "ACTION_DOWN";
+
+                // Reset drawing state, start drawing new box
+                mCurrent = new Box(currentIndexed);
+                mBoxes.add(mCurrent);
+                break;
+            case MotionEvent.ACTION_POINTER_DOWN:
+                action = "ACTION_POINTER_DOWN";
+
+                // only for logging purposes
+                break;
+            case MotionEvent.ACTION_POINTER_UP:
+                action = "ACTION_POINTER_UP";
+
+                // only for logging purposes
+                break;
+            case MotionEvent.ACTION_MOVE:
+                action = "ACTION_MOVE";
+
+                int pointers = event.getPointerCount();
+                for (int i = 0; i < pointers; i++) {
+                    int pointerId = event.getPointerId(i);
+                    if (pointerId == 0 && mCurrent != null) {
+                        // refreshing the Box.mCurrent on move action
+                        // this is done with first finger and it varies the box's "current" point
+                        mCurrent.setCurrentPoint(currentIndexed);
+                        invalidate();
+                    }
+                    if (pointerId == 1 && pointers > 1 && mCurrent != null) {
+                        // when user lifts up the first finger, keeping the second,
+                        // this method must not set rotation (to zero) for the last box.
+                        // only when two fingers are down, rotation is being calculated and set!
+
+                        double deltaX = event.getX(i) - event.getX(0);
+                        double deltaY = event.getY(i) - event.getY(0);
+                        mBoxDegreeRotation = (float) Math.toDegrees(Math.atan2(deltaY, deltaX));
+                        mCurrent.setRotation(mBoxDegreeRotation);
+
+                        Log.i(TAG, action + ": actionIndex = " + actionIndex +
+                                ", actionPointerId = " + actionPointerId +
+                                ", at x = " + pointerX + " and y = " + pointerY);
+                        Log.i(TAG, "mDegree =  " + mBoxDegreeRotation);
+                    }
+                }
+                break;
+            case MotionEvent.ACTION_UP:
+                action = "ACTION_UP";
+
+                mCurrent = null;
+                break;
+            case MotionEvent.ACTION_CANCEL:
+                action = "ACTION_CANCEL";
+
+                mCurrent = null;
+                break;
+            default:
+                mCurrent = null;
+        }
+
+        Log.i(TAG, action + ": actionIndex = " + actionIndex +
+                ", actionPointerId = " + actionPointerId +
+                ", at x = " + pointerX + " and y = " + pointerY);
+        if (mBoxDegreeRotation != 0) {
+            Log.i(TAG, "!!!!! mDegree =  " + mBoxDegreeRotation);
+        }
+
+        return true;
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        // Fill out the background
+        canvas.drawPaint(mBackgroundPaint);
+
+        for (Box box : mBoxes) {
+            canvas.save();
+            float left = Math.min(box.getOriginPoint().x, box.getCurrentPoint().x);
+            float right = Math.max(box.getOriginPoint().x, box.getCurrentPoint().x);
+            float top = Math.min(box.getOriginPoint().y, box.getCurrentPoint().y);
+            float bottom = Math.max(box.getOriginPoint().y, box.getCurrentPoint().y);
+
+            canvas.rotate(box.getRotation(), box.getCurrentPoint().x, box.getCurrentPoint().y);
+            canvas.drawRect(left, top, right, bottom, mBoxPaint);
+            canvas.restore();
+        }
+    }
+
+    /**
+     * Calculate current display metrics for a later usage in coordinates calculations for
+     * various screen's rotations.
+     */
+    private void calculateDisplayMetrics() {
+        DisplayMetrics metrics = new DisplayMetrics();
+        ((Activity) getContext()).getWindowManager().getDefaultDisplay().getMetrics(metrics);
+        mMaxDisplayWidth = Math.min(metrics.heightPixels, metrics.widthPixels);
+        mMaxDisplayHeight = Math.max(metrics.heightPixels, metrics.widthPixels);
+    }
+
+    /**
+     * Calculate so-called "zero-based" coordinates: coordinates for a point, as if
+     * the device is held vertically with 0 degrees rotation angle (default rotation).
+     * This information is needed to correctly calculate coordinates for other screen's rotations.
+     *
+     * @param pointF point with coordinates in current rotation
+     * @return new point with coordinates on the vertical screen with 0 degrees rotation
+     */
     private PointF calculateZeroBaseCoordinates(PointF pointF) {
         float x = pointF.x;
         float y = pointF.y;
         float x0 = 0;
         float y0 = 0;
 
-        switch (currentRotation) {
+        switch (mCurrentScreenRotation) {
             case Surface.ROTATION_0:
                 x0 = x;
                 y0 = y;
@@ -131,13 +280,20 @@ public class BoxDrawingView extends View {
         return new PointF(x0, y0);
     }
 
+    /**
+     * Calculate new coordinates using "zero-based" coordinates.
+     * See {@link BoxDrawingView#calculateZeroBaseCoordinates(PointF)}.
+     *
+     * @param pointF point with coordinates in current rotation
+     * @return new point with coordinates on the screen with current rotation
+     */
     private PointF calculateNewCoordinates(PointF pointF) {
         float x0 = pointF.x;
         float y0 = pointF.y;
         float x = 0;
         float y = 0;
 
-        switch (currentRotation) {
+        switch (mCurrentScreenRotation) {
             case Surface.ROTATION_0:
                 x = x0;
                 y = y0;
@@ -158,83 +314,5 @@ public class BoxDrawingView extends View {
         }
 
         return new PointF(x, y);
-    }
-
-    @Override
-    protected void onRestoreInstanceState(Parcelable state) {
-        Bundle bundle = ((Bundle) state);
-        Parcelable parentState = bundle.getParcelable(ARG_PARENT_VIEW);
-        super.onRestoreInstanceState(parentState);
-
-        initialRotation = bundle.getInt(ARG_CURRENT_ROTATION);
-
-        int i = 0;
-        while (bundle.getParcelable(ARG_CURRENT_OR + "_" + i) != null) {
-            PointF origin = bundle.getParcelable(ARG_CURRENT_OR + "_" + i);
-            PointF current = bundle.getParcelable(ARG_CURRENT_CUR + "_" + i);
-
-            Box box = new Box(calculateNewCoordinates(origin));
-            box.setCurrent(calculateNewCoordinates(current));
-            mBoxes.add(box);
-            i++;
-        }
-        invalidate();
-    }
-
-    @Override
-    public boolean onTouchEvent(MotionEvent event) {
-        PointF current = new PointF(event.getX(), event.getY());
-        String action = "";
-
-        switch (event.getAction()) {
-            case MotionEvent.ACTION_DOWN:
-                action = "ACTION_DOWN";
-
-                // Reset drawing state
-                mCurrent = new Box(current);
-                mBoxes.add(mCurrent);
-                break;
-            case MotionEvent.ACTION_MOVE:
-                action = "ACTION_MOVE";
-
-                // refreshing the Box.mCurrent on move action
-                if (mCurrent != null) {
-                    mCurrent.setCurrent(current);
-                    invalidate();
-                }
-                break;
-            case MotionEvent.ACTION_UP:
-                action = "ACTION_UP";
-
-                mCurrent = null;
-                break;
-            case MotionEvent.ACTION_CANCEL:
-                action = "ACTION_CANCEL";
-
-                mCurrent = null;
-                break;
-            default:
-                mCurrent = null;
-        }
-
-        Log.i(TAG, action + " on X = " + current.x +
-                "and Y = " + current.y);
-
-        return true;
-    }
-
-    @Override
-    protected void onDraw(Canvas canvas) {
-        // Fill out the background
-        canvas.drawPaint(mBackgroundPaint);
-
-        for (Box box : mBoxes) {
-            float left = Math.min(box.getOrigin().x, box.getCurrent().x);
-            float right = Math.max(box.getOrigin().x, box.getCurrent().x);
-            float top = Math.min(box.getOrigin().y, box.getCurrent().y);
-            float bottom = Math.max(box.getOrigin().y, box.getCurrent().y);
-
-            canvas.drawRect(left, top, right, bottom, mBoxPaint);
-        }
     }
 }
